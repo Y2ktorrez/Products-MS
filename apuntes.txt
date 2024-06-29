@@ -1,0 +1,297 @@
+
+## Configuraciones Iniciales 
+
+Primero instalamos la aplicacion: nest new -nombre_
+Luego borramos los archivos que no vamos a necesitar y tambien sus importaciones.
+Despues Corremos la Aplicacion: npm run start:dev
+
+## DTO y ENTITIES
+
+ENTITIES:
+Basicamente aqui no vamos a usar tanto los entities, porque vamos a usar PRISMA como un ORM
+y no es tan necesario usar nuevamente el entities, pero como ejemplo esta programado en nuestro entities
+
+DTO:
+Instalamos estas dependencias: npm i class-validator class-Transformer
+Modificamos el Main con un validacion global:
+  //Validacion Global
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      /*Convertir al tipo de dato esperado los DTO*/
+      transform: true,
+      transformOptions:{
+        enableImplicitConversion: true,
+      }
+    })
+  );  
+
+Luego Programamos el create-dto:
+import { Type } from "class-transformer";
+import { IsNumber, IsPositive, IsString, Min } from "class-validator";
+
+export class CreateProductDto {
+
+  @IsString()
+  public name: string;
+
+  @IsPositive()
+  @IsNumber({
+    maxDecimalPlaces: 4,
+  })
+  @Min(0)
+  /* Lo Tranformamos en un Number */
+  @Type(() => Number)
+  public price: number;
+}
+
+## Configurar Variables de Entorno
+
+Intalamos estas dependencias: npm i dotenv joi 
+Creamos dentro de la carpeta src un folder llamado config, dentro de el dos archivos: envs.ts e index.ts,
+Ah su vez creamos un .env en la raiz general de la aplicacion y metemos esto: 
+PORT=3001
+
+Luego en el envs.ts (esta en nuestro snippet):
+/* npm i dotenv joi  */
+import 'dotenv/config';
+import * as joi from 'joi';
+
+interface EnvVars {
+  PORT: number;
+}
+
+const envsSchema = joi.object({
+  PORT: joi.number().required()
+})
+.unknown(true);
+
+const {error, value} = envsSchema.validate(process.env);
+if(error){
+  throw new Error(`Config validation error: ${error.message}`);
+}
+
+const envVars: EnvVars = value;
+
+export const env = {
+  port: envVars.PORT,
+}
+
+y en el index.ts:
+export * from './envs';
+
+Ahora Configuramos nuevamente el Main.ts:
+  await app.listen( env.port );
+  console.log(`App Running on port ${env.port}`);
+
+## Prisma Configuracion
+
+Instalamos Prisma:
+npm install prisma --save-dev
+npx prisma init
+
+Luego hacemos las Configuraciones necesarias para que funcione y se conecte con mi DB
+y una vez creado algun modelo lo migramos:
+npx prisma migrate dev
+
+Tambien es necesario instalar el Prisma Client:
+npm install @prisma/client
+
+##Configuracion Services con Prisma 
+export class ProductsService extends PrismaClient implements OnModuleInit{
+
+  private readonly logger = new Logger('ProductsService');
+
+  onModuleInit() {
+    this.$connect();
+    this.logger.log(`Database connected`);
+  }
+  
+## Configuracion Adicional del Main (Opcional para que este mas ardenado en la Terminal)
+async function bootstrap() {
+
+  const logger = new Logger(`Main`);
+  const app = await NestFactory.create(AppModule);
+  
+  //Validacion Global
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      /*Convertir al tipo de dato esperado los DTO*/
+      transform: true,
+      transformOptions:{
+        enableImplicitConversion: true,
+      }
+    })
+  );  
+
+  await app.listen( env.port );
+  logger.log(`App Running on port ${env.port}`);
+  
+}
+bootstrap();
+
+##Antes de Pasar a Programar el RES API
+
+Tenemos que tomar en cuenta que hacer una eliminacion general en una base de datos puede ser 
+perfudicial, ya que puede aver riesgo de problemas relacionales o de integridad. Por eso en el Schema 
+de los Productos vamos a tener que meter available: 
+model Product {
+  id    Int    @id @default(autoincrement())
+  name  String
+  price Float
+
+  available Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  //Indexamos
+  @@index([available])
+}
+
+Con esto vamos a poder seguir, pero no nos olvidemos de migrar nuevamente la base de datos
+
+## Programamos en los RES API
+
+Para Crear hacemos de esta manera:
+products.service:
+
+  create(createProductDto: CreateProductDto) {
+    return  this.product.create({
+      data: createProductDto
+    });
+  }
+
+products.controller:
+
+  @Post()
+  create(@Body() createProductDto: CreateProductDto) {
+    return this.productsService.create(createProductDto);
+  }
+
+Para el Visualizar tenemos que tomar en cuanta que aqui lo estamos haciendo
+por paginacion. Ahora en el src creamos una carpeta llamada common y dentro de ella creamos 
+una carpeta dto y un archivo index. en el Dto igual creamos un archivo llamado
+pagination.dto.ts:
+import { Type } from "class-transformer";
+import { IsOptional, IsPositive } from "class-validator";
+
+
+export class PaginationDto{
+
+  @IsPositive()
+  @IsOptional()
+  @Type(() =>Number)
+  page?: number = 1;
+
+  @IsPositive()
+  @IsOptional()
+  @Type(() =>Number)
+  limit?: number = 10;
+
+}
+
+en el index.ts:
+export * from './dto/pagination.dto';
+
+Bueno ahora tramabajos en los product
+products.service:
+  async findAll(paginationDto: PaginationDto) {
+    const {page, limit} = paginationDto;
+    const totalPages = await this.product.count({where: {available: true}});
+    const lastPage = Math.ceil(totalPages/limit);
+    
+    return{
+      data: await this.product.findMany({
+        skip: (page - 1)* limit,
+        take: limit,
+        where: {
+          available: true
+        }
+    }),
+      meta: {
+        total: totalPages,
+        page: page,
+        lastPage: lastPage
+      } 
+    }
+  }
+
+products.controller:
+  @Get()
+  findAll(@Query() paginationDto: PaginationDto) {
+    return this.productsService.findAll(paginationDto);
+  }
+
+Lo mismo para visualizar algun producto por id
+products.service:
+  async findOne(id: number) {
+    const product = await this.product.findFirst({
+      where:{id, available: true}
+    });
+    if(!product){
+      throw new NotFoundException(`Product with id ${id} not found`);
+    }
+    return product;
+  }
+
+products.controller:
+  @Get(':id')
+  findOne(@Param('id') id: string) {
+    return this.productsService.findOne(+id);
+  }
+
+Para Editar algun producto
+products.service:
+  async update(id: number, updateProductDto: UpdateProductDto) {
+    await this.findOne(id);
+    return this.product.update({
+      where: {id},
+      data: updateProductDto,
+    }); 
+  }
+
+products.controller:
+  @Patch(':id')
+  update(@Param('id', ParseIntPipe) id: number, @Body() updateProductDto: UpdateProductDto) {
+    return this.productsService.update(id, updateProductDto);
+  }
+
+Ahora para eliminar, toma en cuenta que te voy a mostrar dos logicas, una que es el eliminado fisico 
+y otra de eliminacion con bandera.
+products.service:
+  /* Eliminacion Fisica */
+  async remove(id: number) {
+    await this.findOne(id);
+    return this.product.delete({
+      where: {id}
+    });
+  }
+
+  /* Eliminacion Suave con Bandera */
+  async softDelete(id: number) {
+    await this.findOne(id);
+    const product = await this.product.update({
+      where: {id},
+      data: {
+        available: false
+      }
+    });
+    return product;
+  }
+
+products.controller:
+  @Delete(':id')
+  remove(@Param('id', ParseIntPipe) id: number) {
+    return this.productsService.remove(id);
+  }
+
+  @Delete(':id')
+  softDelete(@Param('id', ParseIntPipe) id: number) {
+    return this.productsService.softDelete(id);
+  }
+
+
