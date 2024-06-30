@@ -82,7 +82,7 @@ y en el index.ts:
 export * from './envs';
 
 Ahora Configuramos nuevamente el Main.ts:
-  await app.listen( env.port );
+  await app.listen( env.port ); 
   console.log(`App Running on port ${env.port}`);
 
 ## Prisma Configuracion
@@ -294,4 +294,42 @@ products.controller:
     return this.productsService.softDelete(id);
   }
 
+##Transformacion a Microservicio
 
+Al ser una Aplicacion creada en RES API debemos convertirla a un Microservicio de forma Hibrida.
+Ahora instalamos esta dependencia:
+npm i --save @nestjs/microservices
+
+Hacemos este Cambio en el Main:
+async function bootstrap() {
+
+  const logger = new Logger('Main');
+
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule,
+  {
+    transport: Transport.TCP,
+    options: {
+      port: env.port
+    }
+
+  });
+  //Validacion Global
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      /*Convertir al tipo de dato esperado los DTO*/
+      transform: true,
+      transformOptions:{
+        enableImplicitConversion: true,
+      }
+    })
+  );  
+  await app.listen();
+  logger.log(`Products Microservices running on port ${env.port}`);
+  
+}
+bootstrap();
+
+Ahora todos los cambios reales estan en los controllers y una que otra configuracion adicional en los services
+y en el update dto. Revisar y se termina el proyecto.
